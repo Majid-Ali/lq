@@ -1,0 +1,7 @@
+name = Qalandar QR Code
+description = If the Qalandar is Physical A QR code will be generated and attached with node.
+
+core = "7.x"
+project = "qalandar_qr"
+datestamp = "1476030529"
+

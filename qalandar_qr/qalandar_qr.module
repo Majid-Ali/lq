@@ -1,0 +1,44 @@
+<?php
+
+/**
+ * Implementing hook_node_insert
+ * @param type $node
+ * @Author Majid Ali
+ */
+function qalandar_qr_node_insert($node) {
+  //Check if the content type is qalandar & field_type is Physical
+  if (!empty($node) && $node->type == "qalandar" && $node->field_type[LANGUAGE_NONE][0]['value'] == 0) {
+    //Preparig data to generate QR code
+    $width = $height = 200;
+    $name = $node->title;
+    $nid = $node->nid;
+    $points = $node->field_points[LANGUAGE_NONE][0]['value'];
+    $str = urlencode("{ 'nid': '$nid', 'name': '$name', 'points': '$points'}");
+    $image_name = $node->nid . '-qr.png';
+    //Using Google Charts API to generate QR Code Image
+    $url = 'http://chart.apis.google.com/chart?chs=' . $width . 'x' . $height . '&cht=qr&chl=' . $str;
+
+    // initialize cURL settings
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_HEADER, 0);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_BINARYTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+
+    // fetch raw data  
+    $rawdata = curl_exec($ch);
+    curl_close($ch);
+    //See if we get the data
+    if (!empty($rawdata)) {
+      //Save the image on Public://qr/
+      $file = file_save_data($rawdata, file_default_scheme() . '://qr/' . $image_name);
+      $file->status = 1;
+      $node->field_qalandar_image[LANGUAGE_NONE][] = (array) $file;
+      //Save the field in node
+      field_attach_update('node', $node);
+    } else {
+      //If Unable to generate QR code
+      drupal_set_message("Unable to generate QR Image", "error");
+    }
+  }
+}

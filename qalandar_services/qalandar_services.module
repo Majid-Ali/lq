@@ -1,0 +1,131 @@
+<?php
+
+/**
+ * Implements of hook_services_resources()
+ * @Author Majid Ali
+ */
+function qalandar_services_services_resources() {
+  $api = array(
+      'qalandar' => array(
+          'actions' => array(
+              'retrieve' => array(
+                  'help' => 'Retrieve nearest qalandars',
+                  'callback' => '_qalandar_services_retrieve',
+                  'access callback' => 'user_access',
+                  'access arguments' => array('access content'),
+                  'access arguments append' => FALSE,
+                  'args' => array(
+                      array(
+                          'name' => 'location',
+                          'type' => 'string',
+                          'description' => 'User location',
+                          'source' => 'data',
+                          'optional' => FALSE,
+                          'default' => '0',
+                      ),
+                  ),
+              ),
+              'consume' => array(
+                  'help' => 'Consume qalandar & transfer points to user',
+                  'callback' => '_qalandar_services_consume',
+                  'access callback' => 'user_access',
+                  'access arguments' => array('access content'),
+                  'access arguments append' => FALSE,
+                  'args' => array(
+                      array(
+                          'name' => 'info',
+                          'type' => 'string',
+                          'description' => 'Node id & Points',
+                          'source' => 'data',
+                          'optional' => FALSE,
+                          'default' => '0',
+                      ),
+                  ),
+              ),
+          ),
+      ),
+  );
+
+  return $api;
+}
+
+/**
+ * Callback function to retrieve qalandar 
+ * @param type $data
+ * @return type $node array
+ * @Author Majid Ali
+ */
+function _qalandar_services_retrieve($data) {
+  //User latitude/longitude
+  $user_latitude = $data['latitude'];
+  $user_longitude = $data['longitude'];
+  //Proximity in KM
+  $proximity = $data['proximity'];
+  //Start Limit if empty set 0
+  $offset = $data['offset'] ? $data['offset'] : 0;
+  //End Limit if empty set 10
+  $limit = $data['limit'] ? $data['limit'] : 10;
+
+  if (empty($user_latitude) || empty($user_longitude) || empty($proximity)) {
+    return services_error("Required parameters missing", 406);
+  }
+
+  // Keep it simple. We don't need high accuracy here.
+  $earth_radius = 6371;
+
+  //Implement haversine formula to get all the qalandar id's in the defined proximity
+  $query = db_query_range('SELECT entity_id, ( :earth_radius * acos( cos( radians(:user_latitude) ) * field_location_lat_cos * cos( field_location_lng_rad - radians(:user_longitude) ) + sin( radians(:user_latitude) ) * field_location_lat_sin ) ) AS distance FROM field_data_field_location HAVING distance < :proximity ORDER BY distance', $offset, $limit, array(':earth_radius' => $earth_radius, ':user_latitude' => $user_latitude, ':user_longitude' => $user_longitude, ':proximity' => $proximity));
+  $res_ids = $query->fetchAll();
+
+  $nodes = array();
+  $count = 0;
+  if (!empty($res_ids)) {
+    //Loop ids to load node object
+    foreach ($res_ids as $nid) {
+      // Load node.
+      $nodes[] = node_load($nid->entity_id);
+
+      //Since Node object only provide URI of Images need to add URL of it.
+      $image_src = $nodes[$count]->field_qalandar_image[LANGUAGE_NONE][0]['uri'];
+      $image_url = file_create_url($image_src);
+      $nodes[$count]->field_qalandar_image[LANGUAGE_NONE][0]['url'] = $image_url;
+      $nodes[$count]->distance = $nid->distance;
+
+      $count ++;
+    }
+  }
+  if (empty($nodes))
+    return services_error("No Qalandar Found", 404);
+  else
+    return $nodes;
+}
+
+/**
+ * Callback function to consume qalandar
+ * @param type $data
+ * @return string
+ * @Author Majid Ali
+ */
+function _qalandar_services_consume($data) {
+  $nid = $data['nid'];
+  $points = (int) $data['points'];
+  $uid = $data['uid'];
+
+  //Check if we are loaded
+  if (empty($nid) || empty($points) || empty($uid)) {
+    return services_error("Required parameters missing", 406);
+  } else {
+    $user = user_load($uid);
+    if (!empty($user)) {
+      $user_points = $user->field_user_points[LANGUAGE_NONE][0]['value'];
+      $user->field_user_points[LANGUAGE_NONE][0]['value'] = $user_points + $points;
+      if (user_save($user) && !empty(node_load($nid))) {
+        node_delete($nid);
+        $message = "You have been awarded " . $points . " points";
+      } else {
+        return services_error("operation faild", 406);
+      }
+    }
+  }
+  return $message;
+}

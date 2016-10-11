@@ -1,0 +1,12 @@
+name = Qalandar Services
+description = Set of custom web services.
+
+; This module uses hook_services_resources() therefore Services module 3.x is required.
+; Moreover haversine formula is implemented on the data acquired by Geolocation module    
+dependencies[] = services
+dependencies[] = geolocation
+
+core = "7.x"
+project = "qalandar_services"
+datestamp = "1475703228"
+
