@@ -42,6 +42,40 @@ function qalandar_services_services_resources() {
                       ),
                   ),
               ),
+              'collection' => array(
+                  'help' => 'Users qalandars collection',
+                  'callback' => '_qalandar_services_collection',
+                  'access callback' => 'user_access',
+                  'access arguments' => array('access content'),
+                  'access arguments append' => FALSE,
+                  'args' => array(
+                      array(
+                          'name' => 'uid',
+                          'type' => 'string',
+                          'description' => 'User id',
+                          'source' => 'data',
+                          'optional' => FALSE,
+                          'default' => '0',
+                      ),
+                  ),
+              ),
+              'rewards' => array(
+                  'help' => 'Get all rewards',
+                  'callback' => '_qalandar_services_rewards',
+                  'access callback' => 'user_access',
+                  'access arguments' => array('access content'),
+                  'access arguments append' => FALSE,
+                  'args' => array(
+                      array(
+                          'name' => 'limit',
+                          'type' => 'string',
+                          'description' => 'offset & limit',
+                          'source' => 'data',
+                          'optional' => TRUE,
+                          'default' => '0',
+                      ),
+                  ),
+              ),
               'forgot_password' => array(
                   'help' => 'Generate and email password to the user',
                   'callback' => '_qalandar_services_password',
@@ -92,28 +126,27 @@ function _qalandar_services_retrieve($data) {
   $earth_radius = 6371;
 
   //Implement haversine formula to get all the qalandar id's in the defined proximity
-  $query = db_query_range('SELECT entity_id, ( :earth_radius * acos( cos( radians(:user_latitude) ) * field_location_lat_cos * cos( field_location_lng_rad - radians(:user_longitude) ) + sin( radians(:user_latitude) ) * field_location_lat_sin ) ) AS distance FROM field_data_field_location HAVING distance < :proximity ORDER BY distance', $offset, $limit, array(':earth_radius' => $earth_radius, ':user_latitude' => $user_latitude, ':user_longitude' => $user_longitude, ':proximity' => $proximity));
+  //Only using db_query because its fast.
+  $query = db_query_range('SELECT entity_id, ( :earth_radius * acos( cos( radians(:user_latitude) ) * field_location_lat_cos * cos( field_location_lng_rad - radians(:user_longitude) ) + sin( radians(:user_latitude) ) * field_location_lat_sin ) ) AS distance FROM field_data_field_location fl join node nd ON fl.entity_id = nd.nid WHERE nd.consumed = 0 HAVING distance < :proximity ORDER BY distance', $offset, $limit, array(':earth_radius' => $earth_radius, ':user_latitude' => $user_latitude, ':user_longitude' => $user_longitude, ':proximity' => $proximity));
   $res_ids = $query->fetchAll();
 
   $nodes = array();
-  $count = 0;
   if (!empty($res_ids)) {
     //Loop ids to load node object
     foreach ($res_ids as $nid) {
       // Load node.
-      $nodes[] = node_load($nid->entity_id);
-
+      $node = node_load($nid->entity_id);
       //Since Node object only provide URI of Images need to add URL of it.
-      $image_src = $nodes[$count]->field_qalandar_image[LANGUAGE_NONE][0]['uri'];
+      $image_src = $node->field_qalandar_image[LANGUAGE_NONE][0]['uri'];
       $image_url = file_create_url($image_src);
-      $nodes[$count]->field_qalandar_image[LANGUAGE_NONE][0]['url'] = $image_url;
-      $nodes[$count]->distance = $nid->distance;
-
-      $count ++;
+      $node->field_qalandar_image[LANGUAGE_NONE][0]['url'] = $image_url;
+      $node->distance = $nid->distance;
+      //Adding node obj into array  
+      $nodes[] = $node;
     }
   }
   if (empty($nodes))
-    return services_error("No Qalandar Found", 404);
+    return services_error("No qalandar found", 404);
   else
     return $nodes;
 }
@@ -134,18 +167,110 @@ function _qalandar_services_consume($data) {
     return services_error("Required parameters missing", 406);
   } else {
     $user = user_load($uid);
-    if (!empty($user)) {
+    $node = node_load($nid);
+
+    if (!empty($user) && !empty($node) && $node->consumed == 0) {
       $user_points = $user->field_user_points[LANGUAGE_NONE][0]['value'];
       $user->field_user_points[LANGUAGE_NONE][0]['value'] = $user_points + $points;
-      if (user_save($user) && !empty(node_load($nid))) {
-        node_delete($nid);
-        $message = "You have been awarded " . $points . " points";
+      //Set the status to consumed
+      $node->consumed = 1;
+      if (user_save($user)) {
+        node_save($node);
+        $query = db_insert('qalandar_collections')
+          ->fields(array(
+              'uid' => $user->uid,
+              'nid' => $node->nid,
+          ))
+          ->execute();
+        $success_msg = "You have been awarded " . $points . " points";
       } else {
-        return services_error("operation faild", 406);
+        return services_error("Operation faild", 406);
       }
+    } else {
+      return services_error("Qalandar already consumed", 406);
     }
   }
-  return $message;
+  return $success_msg;
+}
+
+/**
+ * Callback function to get user qalandar's collection
+ * @param type $data
+ * @return type $node
+ * @Author Majid Ali
+ */
+function _qalandar_services_collection($data) {
+  $uid = $data['uid'];
+  //Start Limit if empty set 0
+  $offset = $data['offset'] ? $data['offset'] : 0;
+  //End Limit if empty set 10
+  $limit = $data['limit'] ? $data['limit'] : 10;
+  //Check if we got the uid
+  if (empty($uid)) {
+    return services_error("Required parameters missing", 406);
+  } else {
+    $user = user_load($uid);
+    $nodes = array();
+    if ($user) {
+      //Get all the qalandars the user has aquired.
+      $collections = db_select('qalandar_collections', 'qc')
+          ->fields('qc', array('uid', 'nid', 'timestamp'))
+          ->condition('qc.uid', $user->uid, '=')
+          ->range($offset, $limit)
+          ->execute()->fetchAll();
+      if ($collections) {
+        foreach ($collections as $collection) {
+          //Prepare nodes & add additional params
+          $node = node_load($collection->nid);
+          $node->collected_on = $collection->timestamp;
+          //Since Node object only provide URI of Images need to add URL of it.
+          $image_src = $node->field_qalandar_image[LANGUAGE_NONE][0]['uri'];
+          $image_url = file_create_url($image_src);
+          $node->field_qalandar_image[LANGUAGE_NONE][0]['url'] = $image_url;
+          $nodes[] = $node;
+        }
+      }
+    } else {
+      return services_error("User doesn't exist", 406);
+    }
+  }
+  if (empty($nodes))
+    return services_error("No qalandar found", 404);
+  else
+    return $nodes;
+}
+
+/**
+ * Callback function to get rewads
+ * @param type $data
+ * @return type $rewards
+ * @Author Majid Ali
+ */
+function _qalandar_services_rewards($data) {
+  //Start Limit if empty set 0
+  $offset = $data['offset'] ? $data['offset'] : 0;
+  //End Limit if empty set 10
+  $limit = $data['limit'] ? $data['limit'] : 10;
+
+  // Query all of the nids of a reward content type.
+  $nids = db_select('node', 'n')
+    ->fields('n', array('nid'))
+    ->condition('type', 'reward', '=')
+    ->range($offset, $limit)
+    ->execute()
+    ->fetchCol();
+
+  // Get all of the reward nodes.
+  $nodes = node_load_multiple($nids);
+  $rewards = array();
+  foreach ($nodes as $node) {
+    //Since Node object only provide URI of Images need to add URL of it.
+    $image_src = $node->field_reward_image[LANGUAGE_NONE][0]['uri'];
+    $image_url = file_create_url($image_src);
+    $node->field_reward_image[LANGUAGE_NONE][0]['url'] = $image_url;
+    $rewards[] = $node;
+  }
+  return $rewards;
 }
 
 /**
@@ -158,7 +283,7 @@ function _qalandar_services_consume($data) {
 function _qalandar_services_password($data) {
   global $language;
   $mail = trim($data['mail']);
-  // Try to load by email.
+  // Try to load user by email.
   $users = user_load_multiple(array(), array('mail' => $mail, 'status' => '1'));
   $user = reset($users);
 
@@ -201,6 +326,7 @@ function _qalandar_services_password($data) {
  *
  * Used by qalandar_services_mail().
  */
+
 /**
  * Returns a mail string for a variable name.
  * Used by qalandar_services_mail().
