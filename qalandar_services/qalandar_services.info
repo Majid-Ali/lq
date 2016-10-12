@@ -2,9 +2,12 @@ name = Qalandar Services
 description = Set of custom web services.
 
 ; This module uses hook_services_resources() therefore Services module 3.x is required.
-; Moreover haversine formula is implemented on the data acquired by Geolocation module    
+; Moreover haversine formula is implemented on the data acquired by Geolocation module
+; Requires custom_pub module to add custom node publishing status.
+    
 dependencies[] = services
 dependencies[] = geolocation
+dependencies[] = custom_pub
 
 core = "7.x"
 project = "qalandar_services"
