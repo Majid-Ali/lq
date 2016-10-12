@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Implements of hook_services_resources()
+ * Implements hook_services_resources()
  * @Author Majid Ali
  */
 function qalandar_services_services_resources() {
@@ -42,6 +42,23 @@ function qalandar_services_services_resources() {
                       ),
                   ),
               ),
+              'forgot_password' => array(
+                  'help' => 'Generate and email password to the user',
+                  'callback' => '_qalandar_services_password',
+                  'access callback' => 'user_access',
+                  'access arguments' => array('access content'),
+                  'access arguments append' => FALSE,
+                  'args' => array(
+                      array(
+                          'name' => 'mail',
+                          'type' => 'string',
+                          'description' => 'User Email',
+                          'source' => 'data',
+                          'optional' => FALSE,
+                          'default' => '0',
+                      ),
+                  ),
+              ),
           ),
       ),
   );
@@ -50,7 +67,8 @@ function qalandar_services_services_resources() {
 }
 
 /**
- * Callback function to retrieve qalandar 
+ * Callback function to retrieve qalandar. Implements Haversine formula.
+ * @see https://developers.google.com/maps/articles/phpsqlsearch_v3 
  * @param type $data
  * @return type $node array
  * @Author Majid Ali
@@ -128,4 +146,115 @@ function _qalandar_services_consume($data) {
     }
   }
   return $message;
+}
+
+/**
+ * Callback function to generate and email password to user.
+ * @global type $language
+ * @param type $mail
+ * @return type
+ * @Author Majid Ali
+ */
+function _qalandar_services_password($data) {
+  global $language;
+  $mail = trim($data['mail']);
+  // Try to load by email.
+  $users = user_load_multiple(array(), array('mail' => $mail, 'status' => '1'));
+  $user = reset($users);
+
+  if (!isset($user->uid)) {
+    return services_error(t('Sorry, %mail is not recognized as an e-mail address.', array('%mail' => $mail)), 406);
+  }
+  // Generate random password.
+  $random_password = user_password();
+  // Save new password.
+  user_save($user, array('pass' => $random_password), 'account');
+  // Retrive email body and subject.
+  $message = _recovery_password_mail_text('email_text', $language, TRUE, $user);
+
+  if ($message) {
+    // Replace [user_new_password] placeholder with new password.
+    $message = str_replace("[user_new_password]", $random_password, $message);
+  }
+
+  $subject = _recovery_password_mail_text('email_subject', $language, TRUE, $user);
+  if (module_exists("htmlmail")) {
+    // For html mail convert new lines to br.
+    $message = nl2br($message);
+  }
+  $params = array(
+      'body' => $message,
+      'subject' => $subject,
+  );
+  $to = $user->mail;
+  $from = variable_get('site_mail');
+  if (drupal_mail('qalandar_services', 'recovery_password', $to, language_default(), $params, $from, TRUE)) {
+    $success_msg = t("Further instructions have been sent to your registered Email-id.");
+  } else {
+    return services_error("Error Sending Recovery Mail. Please contact administrator.", 406);
+  }
+  return $success_msg;
+}
+
+/**
+ * Returns a mail string for a variable name.
+ *
+ * Used by qalandar_services_mail().
+ */
+/**
+ * Returns a mail string for a variable name.
+ * Used by qalandar_services_mail().
+ * @param type $key
+ * @param type $language
+ * @param type $replace
+ * @param type $user
+ * @return type
+ * @Author Majid Ali
+ */
+function _recovery_password_mail_text($key, $language = NULL, $replace = TRUE, $user = array()) {
+  $langcode = isset($language) ? $language->language : NULL;
+
+  // No override, return default string.
+  switch ($key) {
+    case 'email_subject':
+      $text = t('Replacement login information for [user:name] at [site:name]', array(), array('langcode' => $langcode));
+      break;
+
+    case 'email_text':
+      $text = t("[user:name],
+
+A request to reset the password for your account has been made at [site:name].
+
+Your new password is [user_new_password].
+
+
+--  [site:name] team", array(), array('langcode' => $langcode));
+      break;
+  }
+  if ($replace) {
+    // Token Replace the text.
+    return token_replace($text, array('user' => $user));
+  }
+  return $text;
+}
+
+/**
+ * Implements hook_mail().
+ * @param type $key
+ * @param type $message
+ * @param type $params
+ * @Author Majid Ali
+ */
+function qalandar_services_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'recovery_password':
+      // Mail parameters used for recovery mail.
+      $message['subject'] = $params['subject'];
+      $message['body'][] = $params['body'];
+      if (module_exists("htmlmail")) {
+        // For html mail.
+        $message['headers']['Content-Type'] = 'text/html; charset=UTF-8; format=flowed';
+      }
+      break;
+  }
 }
