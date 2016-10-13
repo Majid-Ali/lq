@@ -287,7 +287,7 @@ function _qalandar_services_password($data) {
   $users = user_load_multiple(array(), array('mail' => $mail, 'status' => '1'));
   $user = reset($users);
 
-  if (!isset($user->uid)) {
+  if (!isset($user->uid) || $user->uid == 1) {
     return services_error(t('Sorry, %mail is not recognized as an e-mail address.', array('%mail' => $mail)), 406);
   }
   // Generate random password.
@@ -320,12 +320,6 @@ function _qalandar_services_password($data) {
   }
   return $success_msg;
 }
-
-/**
- * Returns a mail string for a variable name.
- *
- * Used by qalandar_services_mail().
- */
 
 /**
  * Returns a mail string for a variable name.
